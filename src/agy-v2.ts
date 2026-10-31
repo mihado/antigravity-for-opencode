@@ -1,4 +1,4 @@
-import { runAgy, AgyError, isValidConversationId, redactError, scrubSecrets, type AgyResult } from "./agy-runner";
+import { runAgy, AgyError, isValidConversationId, projectPolicy, redactError, scrubSecrets, type AgyResult } from "./agy-runner";
 import { createAgyCommand, upsertRegistryEntry } from "./agy-command";
 import agySkillMarkdown from "../skills/opencode-agy/SKILL.md";
 
@@ -245,6 +245,11 @@ async function registerAgySkill(ctx: any): Promise<void> {
 export async function setupV2Plugin(ctx: any): Promise<void> {
   if (!ctx || typeof ctx !== "object") return;
 
+  // setup() is location-scoped: capture this location's project directory so
+  // `dir` confinement and the child's cwd follow the project, not the
+  // background service's cwd.
+  const policy = projectPolicy(ctx.location?.directory);
+
   if (typeof ctx.tool?.transform === "function") {
     await ctx.tool.transform((editor: any) => {
       upsertRegistryEntry(editor, "agy", {
@@ -274,6 +279,7 @@ export async function setupV2Plugin(ctx: any): Promise<void> {
               conversation: args.conversation,
               model: args.model,
               signal: context?.signal,
+              policy,
             });
             return buildAgyV2ToolResult(result, args);
           } catch (err: unknown) {

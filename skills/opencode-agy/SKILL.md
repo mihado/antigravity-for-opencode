@@ -87,6 +87,7 @@ agy-side failures come back as `AGY_ERROR [CODE]` with a message, a `details` ob
 | Code | Move |
 | --- | --- |
 | `TIMEOUT` | Resume with `conversation` and `details.suggestedNextTimeout`, see the recipe above. |
+| `CANCELLED` | The caller aborted the run, so this is not a timeout. Do not raise `timeout`. If `details.conversationId` is present the work can be resumed with `conversation`. |
 | `DIR_NOT_ALLOWED` | `dir` is empty, flag-like, non-existent, or outside the workspace root. Omitting `dir` defaults to the workspace root, so leave it out for project-wide work. Use a path inside the project. |
 | `INVALID_TIER` | Unknown tier, a CLI slug, or a dropped name. Pick from the twelve above. |
 | `YOLO_NOT_APPROVED` | Add `sandbox: true` and ask the host for `AGY_ALLOW_YOLO=1`, or drop `yolo`. |

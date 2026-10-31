@@ -117,7 +117,7 @@ Two environment variables bound what the tool may do. Both are read by the plugi
 
 | Variable | Default | Effect |
 | --- | --- | --- |
-| `AGY_WORKSPACE_ROOT` | current working directory | The only directory tree `dir` may point into. |
+| `AGY_WORKSPACE_ROOT` | the project directory OpenCode reports to the plugin (v1 `directory`, v2 `location.directory`); the process working directory if the host reports none | The only directory tree `dir` may point into, and the working directory agy runs in when `dir` is omitted. |
 | `AGY_ALLOW_YOLO` | unset (`false`) | Set to `1` to permit `yolo: true` (still requires `sandbox: true`). |
 
 #### Long-running work
@@ -205,7 +205,7 @@ Twelve tiers across four models. The `hi` / `med` / `lo` suffix selects the mode
 - Stdin is always detached, so agy can never wait on interactive input.
 - Every failure — timeout, quota, auth, crash, empty output, missing CLI — is returned as `AGY_ERROR [<CODE>]` text plus metadata; the host process stays up.
 - The child inherits an explicit allowlist of environment variables (PATH, HOME, locale, proxy, XDG, TLS trust), never the host's full environment, and runs with the workspace root (or the granted `dir`) as its working directory.
-- Secrets are scrubbed from everything surfaced to the caller — stdout, stderr, and error messages — and agy's log is teed to a private, owner-only (`0700`) temp directory that is removed on every exit path.
+- Secrets are scrubbed from everything surfaced to the caller — stdout, stderr, and error messages. Scrubbing is best-effort and pattern-based; it leaves unquoted type annotations (`token: string`) and environment lookups (`process.env.X`) alone so delegated code is not mangled. Agy's log is teed to a private, owner-only (`0700`) temp directory that is removed on every exit path.
 - Output is capped at 100,000 characters / 2,000 bytes of stderr, enforced while the stream is read rather than after buffering it all.
 - Timeouts are enforced twice: agy's own `--print-timeout`, and a host-side timer that terminates the child (SIGTERM, then SIGKILL after a short grace) if it overruns.
 - The calling agent owns verification: review the diff before trusting delegated changes.
