@@ -148,6 +148,20 @@ export function resolvePolicy(overrides: Partial<AgyPolicy> = {}): AgyPolicy {
   };
 }
 
+/**
+ * Host policy rooted at the project directory OpenCode reports to the plugin.
+ *
+ * `process.cwd()` is the wrong default inside a plugin: on OpenCode 2.x the
+ * plugin runs in the background service, whose cwd is wherever the service
+ * was started, not the project. An explicit `AGY_WORKSPACE_ROOT` still wins.
+ * Returns undefined when the host gave no usable directory, so the caller
+ * falls back to `resolvePolicy`'s own defaults.
+ */
+export function projectPolicy(directory: unknown): Partial<AgyPolicy> | undefined {
+  if (typeof directory !== "string" || directory.length === 0) return undefined;
+  return { workspaceRoot: process.env.AGY_WORKSPACE_ROOT || directory };
+}
+
 function canonicalDir(dir: string, what: string): string {
   try {
     return realpathSync(path.resolve(dir));
@@ -583,6 +597,7 @@ export async function runAgy(
   let abortHandler: (() => void) | undefined;
   let hostTimer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
+  let aborted = false;
   try {
     await chmod(logDir, 0o700);
     const logFile = path.join(logDir, "agy.log");
@@ -613,9 +628,11 @@ export async function runAgy(
 
     if (opts.signal) {
       if (opts.signal.aborted) {
+        aborted = true;
         terminateChild(proc);
       } else {
         abortHandler = () => {
+          aborted = true;
           terminateChild(proc);
         };
         opts.signal.addEventListener("abort", abortHandler, { once: true });
@@ -655,6 +672,17 @@ export async function runAgy(
     // (TIMEOUT, AGY_FAILED, EMPTY_OUTPUT, and the general classified path).
     const used = prepared.timeout;
     const timeoutField: Record<string, unknown> = { timeout: used };
+
+    // The caller cancelled and the child died from it. Our own SIGTERM exits
+    // 143, which classifyError would otherwise report as a TIMEOUT and steer
+    // the parent toward retrying with a longer budget. A run that finished
+    // cleanly despite the late abort still returns its result below.
+    if (aborted && exit !== 0) {
+      throw new AgyError("agy run was cancelled", "CANCELLED", {
+        durationMs,
+        ...convIdField(convId),
+      });
+    }
 
     if (timedOut) {
       throw new AgyError("agy exceeded its timeout (host timer)", "TIMEOUT", {
@@ -829,11 +857,35 @@ export function scrubSecrets(text: string): string {
       // Generic assignments: FOO_SECRET=..., token: ..., password=..., api_key=...
       // (optional quotes around the name so JSON-style keys are covered, e.g.
       // "aws_secret_access_key": "...")
+      // Values that are plainly code (a type annotation, an env lookup) are
+      // left alone; see isCodeShapedValue.
       .replace(
-        /\b(password|passwd|pwd|token|secret|api_key|apikey|access_key|private_key|client_secret|[A-Z0-9_]+_(?:KEY|TOKEN|SECRET|PASSWORD))["']?\s*[:=]\s*["']?[^\s"']+["']?/gi,
-        (_match, name: string) => `${name}=[REDACTED]`
+        /\b(password|passwd|pwd|token|secret|api_key|apikey|access_key|private_key|client_secret|[A-Z0-9_]+_(?:KEY|TOKEN|SECRET|PASSWORD))(["']?\s*([:=])\s*)(["']?)([^\s"']+)["']?/gi,
+        (match, name: string, _lead: string, separator: string, quote: string, value: string) =>
+          !quote && isCodeShapedValue(separator, value) ? match : `${name}=[REDACTED]`
       )
   );
+}
+
+/** `token: string`, `api_key: str) -> None`, `Record<string, string>`: a type, not a value. */
+const TYPE_ANNOTATION_RE =
+  /^(?:string|String|str|&str|number|int|int\d+|uint\d*|float\d*|double|bool|boolean|any|unknown|object|bytes|Buffer|Uint8Array|void|null|undefined|None|Optional|Option|Record|Map|Set|Array|List|Dict|dict|list|SecretStr|SecretString)\b[\w.<>\[\]|?,]*[),;}]*$/;
+
+/** `secret = process.env.SECRET_KEY`: a lookup of the value, not the value. */
+const ENV_LOOKUP_RE = /^(?:process\.env|import\.meta\.env|os\.environ|os\.getenv|System\.getenv|std::env)\b/;
+
+/**
+ * The generic `name = value` rule exists to catch real secrets, but a delegated
+ * agent's output is mostly code, where a secret-shaped *name* is followed by a
+ * type or an env lookup. Redacting those mangles the result the parent asked
+ * for. Only unquoted values qualify, and a type is only recognised after `:`,
+ * so `FOO_SECRET=bar`, `password: hunter2` and any quoted value still redact.
+ * A passphrase that happens to spell a type name (`token: string`) is the
+ * accepted blind spot.
+ */
+function isCodeShapedValue(separator: string, value: string): boolean {
+  if (ENV_LOOKUP_RE.test(value)) return true;
+  return separator === ":" && TYPE_ANNOTATION_RE.test(value);
 }
 
 /**

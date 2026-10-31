@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
-import { runAgy, AgyError, isValidConversationId, redactError, scrubSecrets } from "./agy-runner";
+import { runAgy, AgyError, isValidConversationId, projectPolicy, redactError, scrubSecrets } from "./agy-runner";
 import { buildAgyToolResult, createAgyCommand, isCommandDef, upsertRegistryEntry } from "./agy-command";
 import { setupV2Plugin } from "./agy-v2";
 
@@ -25,6 +25,9 @@ export interface UniversalAgyPlugin extends Plugin {
  * - Slash command is provided via commands/agy.md.
  */
 const v1Server: Plugin = async (ctx) => {
+  // Root `dir` confinement and the child's cwd at the project OpenCode opened,
+  // not at whatever cwd the plugin process happens to have.
+  const policy = projectPolicy((ctx as any)?.directory);
   return {
     tool: {
       agy: tool({
@@ -111,6 +114,7 @@ const v1Server: Plugin = async (ctx) => {
               conversation: args.conversation,
               model: args.model,
               signal: (context as any)?.signal,
+              policy,
             });
 
             return buildAgyToolResult(args, result);
